@@ -75,9 +75,9 @@ jobs:
           - { os: ubuntu-22.04,     archs: x86_64,  variant: cu132, cuda: "13.2.0", cuda_short: "13-2", dist_name: easypytorch3d-cu132, platform: linux }
           - { os: ubuntu-22.04-arm, archs: aarch64, variant: cu132, cuda: "13.2.0", cuda_short: "13-2", dist_name: easypytorch3d-cu132, platform: linux }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -211,7 +211,7 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.archs == 'arm64' && '11.0' || '10.15' }}
 
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.dist_name }}-${{ matrix.platform }}-${{ matrix.archs }}
           path: ./wheelhouse/*.whl
@@ -221,9 +221,9 @@ jobs:
     name: sdist (easypytorch3d)
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -241,7 +241,7 @@ jobs:
           PYTORCH3D_NO_EXTENSION: "1"
         run: python -m build --sdist --no-isolation
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sdist-easypytorch3d
           path: ./dist/*.tar.gz
@@ -264,19 +264,19 @@ jobs:
       # Only artifacts whose dist_name is exactly `easypytorch3d`.
       # That's cu130 Linux wheels + macOS CPU wheels + sdist.
       - name: Download cu130 Linux wheels
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
           pattern: "wheels-easypytorch3d-linux-*"
           merge-multiple: true
       - name: Download macOS wheels
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
           pattern: "wheels-easypytorch3d-macos-*"
           merge-multiple: true
       - name: Download sdist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: sdist-easypytorch3d
           path: dist
@@ -302,14 +302,14 @@ jobs:
       contents: write   # create release + upload assets
     steps:
       - name: Download ALL wheel artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: release-assets
           pattern: "wheels-*"
           merge-multiple: true
 
       - name: Download sdist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: sdist-easypytorch3d
           path: release-assets
@@ -318,7 +318,7 @@ jobs:
         run: ls -la release-assets/
 
       - name: Create/Update GitHub Release with all assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           # If triggered manually (no tag), still produce a draft release.
           tag_name: ${{ github.event_name == 'push' && github.ref_name || format('manual-{0}', github.run_id) }}
