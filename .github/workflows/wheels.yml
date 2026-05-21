@@ -63,7 +63,6 @@ jobs:
           - { os: ubuntu-22.04,     archs: x86_64,  variant: cpu,   cuda: "",       cuda_short: "",     dist_name: easypytorch3d-cpu,   platform: linux }
           - { os: ubuntu-22.04-arm, archs: aarch64, variant: cpu,   cuda: "",       cuda_short: "",     dist_name: easypytorch3d-cpu,   platform: linux }
           # ---- macOS CPU  (the ONLY macOS option -> goes to PyPI under bare name) ----
-          - { os: macos-13,         archs: x86_64,  variant: cpu,   cuda: "",       cuda_short: "",     dist_name: easypytorch3d,       platform: macos }
           - { os: macos-14,         archs: arm64,   variant: cpu,   cuda: "",       cuda_short: "",     dist_name: easypytorch3d,       platform: macos }
           # ---- CUDA 12.6  (GH Release only) ----
           - { os: ubuntu-22.04,     archs: x86_64,  variant: cu126, cuda: "12.6.3", cuda_short: "12-6", dist_name: easypytorch3d-cu126, platform: linux }
