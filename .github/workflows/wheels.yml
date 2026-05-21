@@ -93,6 +93,40 @@ jobs:
           sub-packages: '["nvcc", "cudart-dev", "libraries-dev"]'
           log-file-suffix: "${{ matrix.archs }}-${{ matrix.variant }}.txt"
 
+      # Restore ccache from previous runs (per-matrix-row).
+      # The .cu source files dominate compile time and don't include Python.h,
+      # so a single cache hits across all 5 cp310-cp314 builds in the same job.
+      - name: Restore ccache
+        uses: actions/cache@v5
+        with:
+          path: /tmp/ccache
+          key: ccache-${{ matrix.os }}-${{ matrix.archs }}-${{ matrix.variant }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ matrix.os }}-${{ matrix.archs }}-${{ matrix.variant }}-
+            ccache-${{ matrix.os }}-${{ matrix.archs }}-
+
+      # macOS runs without a container, so ccache is installed/wired on the
+      # host. (For Linux, this happens inside the manylinux container in
+      # CIBW_BEFORE_ALL_LINUX below.)
+      - name: Install ccache (macOS)
+        if: matrix.platform == 'macos'
+        run: |
+          brew install ccache
+          mkdir -p "$HOME/ccache_wrappers" /tmp/ccache
+          for c in cc c++ clang clang++ gcc g++; do
+            ln -sf "$(which ccache)" "$HOME/ccache_wrappers/$c"
+          done
+          echo "$HOME/ccache_wrappers" >> "$GITHUB_PATH"
+          {
+            echo "CCACHE_DIR=/tmp/ccache"
+            echo "CCACHE_MAXSIZE=5G"
+            echo "CCACHE_COMPRESS=1"
+            echo "CCACHE_COMPILERCHECK=content"
+          } >> "$GITHUB_ENV"
+          ccache -M 5G
+          ccache -z   # zero stats so the build's hit rate is visible at end
+          ccache -s
+
       - name: Rename distribution to ${{ matrix.dist_name }}
         run: python3 scripts/rename_distribution.py "${{ matrix.dist_name }}"
 
@@ -134,14 +168,9 @@ jobs:
               echo "TORCH_INDEX=https://download.pytorch.org/whl/${{ matrix.variant }}"
             } >> "$GITHUB_ENV"
             # cu126 needs gcc <= 13 (default is 14 in manylinux_2_28 2026.03.20-1).
-            # The paths exist inside the manylinux container after BEFORE_ALL_LINUX
-            # installs gcc-toolset-13; we just forward the env names from host.
-            if [ "${{ matrix.variant }}" = "cu126" ]; then
-              {
-                echo "CC=/opt/rh/gcc-toolset-13/root/usr/bin/gcc"
-                echo "CXX=/opt/rh/gcc-toolset-13/root/usr/bin/g++"
-              } >> "$GITHUB_ENV"
-            fi
+            # No explicit CC/CXX needed: PATH-based ccache masquerade picks the
+            # right gcc because BEFORE_ALL_LINUX puts gcc-toolset-13 in PATH
+            # and ccache resolves the next `gcc` after itself.
           fi
 
       - name: Build wheels with cibuildwheel
@@ -166,7 +195,22 @@ jobs:
             VARIANT CUDA_VERSION CUDA_SHORT MAX_JOBS
             PYTORCH3D_FORCE_NO_CUDA FORCE_CUDA
             CUDA_HOME CUB_HOME TORCH_CUDA_ARCH_LIST TORCH_INDEX
-            CC CXX
+
+          # Mount the host's ccache directory into the container so ccache
+          # state persists via actions/cache between runs.
+          CIBW_CONTAINER_ENGINE: "docker; create_args: --volume=/tmp/ccache:/tmp/ccache"
+
+          # Wrappers at /opt/ccache_wrappers (created in BEFORE_ALL_LINUX) sit
+          # before /usr/bin so a `gcc`/`g++` lookup goes through ccache. For
+          # cu126 we additionally put gcc-toolset-13's bindir on PATH so the
+          # masquerade resolves to gcc 13 (CUDA 12.6 max).
+          CIBW_ENVIRONMENT_LINUX: >-
+            PATH=/opt/ccache_wrappers:/opt/rh/gcc-toolset-13/root/usr/bin:$PATH
+            CCACHE_DIR=/tmp/ccache
+            CCACHE_MAXSIZE=5G
+            CCACHE_COMPRESS=1
+            CCACHE_COMPILERCHECK=content
+            CCACHE_BASEDIR=/project
 
           # macOS is CPU only - no CUDA SDK on the runners.
           CIBW_ENVIRONMENT_MACOS: >-
@@ -174,11 +218,26 @@ jobs:
             FORCE_CUDA=0
             MAX_JOBS=4
             TORCH_INDEX=https://download.pytorch.org/whl/cpu
+            CCACHE_DIR=/tmp/ccache
+            CCACHE_MAXSIZE=5G
+            CCACHE_COMPRESS=1
+            CCACHE_COMPILERCHECK=content
 
           # Install CUDA inside the manylinux container for CUDA variants.
           # h/t StackOverflow user2978125 / mheyman; adapted to rhel8 + sbsa.
           CIBW_BEFORE_ALL_LINUX: |
             set -ex
+
+            # ----- ccache (always; speeds up all subsequent Python builds) -----
+            dnf install -y ccache
+            mkdir -p /opt/ccache_wrappers /tmp/ccache
+            for c in gcc g++ cc c++ clang clang++; do
+              ln -sf "$(command -v ccache)" "/opt/ccache_wrappers/$c"
+            done
+            ccache -M 5G
+            ccache -z   # zero stats so the end-of-build numbers are meaningful
+
+            # ----- CUDA toolkit (only for CUDA variants) -----
             if [ "${VARIANT}" != "cpu" ]; then
               ARCH=$(uname -m)
               if [ "$ARCH" = "aarch64" ]; then
@@ -194,18 +253,33 @@ jobs:
               dnf clean all
               dnf install -y "cuda-toolkit-${CUDA_SHORT}"
               ln -snf "/usr/local/cuda-${CUDA_VERSION%.*}" /usr/local/cuda
+
+              # Replace nvcc with a ccache wrapper IN-PLACE. torch invokes nvcc
+              # by absolute path (`$CUDA_HOME/bin/nvcc`), so the PATH-based
+              # /opt/ccache_wrappers/ symlinks above wouldn't catch it.
+              if [ -f /usr/local/cuda/bin/nvcc ] && [ ! -f /usr/local/cuda/bin/nvcc.real ]; then
+                mv /usr/local/cuda/bin/nvcc /usr/local/cuda/bin/nvcc.real
+                cat > /usr/local/cuda/bin/nvcc <<'WRAPPER'
+            #!/bin/sh
+            exec ccache /usr/local/cuda/bin/nvcc.real "$@"
+            WRAPPER
+                chmod +x /usr/local/cuda/bin/nvcc
+              fi
               /usr/local/cuda/bin/nvcc --version
             fi
+
             # manylinux_2_28's default gcc is 14.x as of 2026.03.20-1, but
             # CUDA 12.6 only supports gcc <= 13. Install gcc-toolset-13 for
             # cu126. cu130/cu132 support gcc 14, so they keep the default.
             if [ "${VARIANT}" = "cu126" ]; then
               dnf install -y gcc-toolset-13 gcc-toolset-13-gcc-c++
             fi
+            ccache -s
 
           CIBW_BEFORE_BUILD: |
             python -m pip install --upgrade pip setuptools wheel ninja
             python -m pip install "torch>=2.12.0" --index-url "${TORCH_INDEX}"
+            command -v ccache && ccache -s || true
 
           # Skip auditwheel/delocate REPAIR for torch extensions.
           #
