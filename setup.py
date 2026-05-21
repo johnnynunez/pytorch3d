@@ -64,6 +64,23 @@ def get_extensions():
     define_macros = []
     include_dirs = [extensions_dir]
 
+    # Add a runtime search path so the built `_C.so` / `_C.dylib` can find
+    # torch's shared libraries (libtorch_cpu, libc10, libtorch_cuda...) at
+    # import time. Without this, after installation the user sees
+    # `ImportError: libc10.so: cannot open shared object file` (Linux) or
+    # `Library not loaded: @rpath/libc10.dylib` (macOS).
+    #
+    # Mirrors how torchvision / torchaudio wheels are linked. `$ORIGIN` /
+    # `@loader_path` resolve to the directory holding `_C.so`
+    # (`site-packages/pytorch3d/`), so `../torch/lib` is the sibling
+    # `site-packages/torch/lib/` regardless of the install prefix.
+    if sys.platform == "darwin":
+        extra_link_args = ["-Wl,-rpath,@loader_path/../torch/lib"]
+    elif sys.platform.startswith("linux"):
+        extra_link_args = ["-Wl,-rpath,$ORIGIN/../torch/lib"]
+    else:
+        extra_link_args = []
+
     force_cuda = os.getenv("FORCE_CUDA", "0") == "1"
     force_no_cuda = os.getenv("PYTORCH3D_FORCE_NO_CUDA", "0") == "1"
     if (
@@ -146,6 +163,7 @@ def get_extensions():
             include_dirs=include_dirs,
             define_macros=define_macros,
             extra_compile_args=extra_compile_args,
+            extra_link_args=extra_link_args,
         )
     ]
 
