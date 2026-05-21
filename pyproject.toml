@@ -34,11 +34,12 @@ pytorch3d_implicitron_runner = "pytorch3d.implicitron_trainer.experiment:experim
 pytorch3d_implicitron_visualizer = "pytorch3d.implicitron_trainer.visualize_reconstruction:main"
 
 [tool.setuptools]
-package-dir = { "pytorch3d.implicitron_trainer" = "projects/implicitron_trainer" }
+# `packages` and `package-dir` are set dynamically in setup.py because the
+# `pytorch3d.implicitron_trainer` sub-package physically lives at
+# `projects/implicitron_trainer/` and has to be grafted in by name -- something
+# setuptools' declarative `find` cannot express together with a path remap.
+include-package-data = false
 package-data = { "*" = ["*.json"] }
 
 [tool.setuptools.dynamic]
 version = { attr = "pytorch3d.__version__" }
-
-[tool.setuptools.packages.find]
-exclude = ["configs", "tests", "tests.*", "docs.*", "projects.*"]

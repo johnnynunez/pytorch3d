@@ -16,8 +16,16 @@ import warnings
 from typing import List, Optional
 
 import torch
-from setuptools import setup
+from setuptools import find_packages, setup
 from torch.utils.cpp_extension import CppExtension, CUDA_HOME, CUDAExtension
+
+# The implicitron trainer lives outside the importable `pytorch3d/` directory
+# (at `projects/implicitron_trainer/`) and gets grafted in under the
+# `pytorch3d.implicitron_trainer` name. setuptools' declarative `find` cannot
+# express that, so we keep this small bit of dynamic config here.
+TRAINER = "pytorch3d.implicitron_trainer"
+PACKAGES = find_packages(include=["pytorch3d*"], exclude=["tests*"]) + [TRAINER]
+PACKAGE_DIR = {TRAINER: "projects/implicitron_trainer"}
 
 
 def get_existing_ccbin(nvcc_args: List[str]) -> Optional[str]:
@@ -155,6 +163,8 @@ else:
 
 
 setup(
+    packages=PACKAGES,
+    package_dir=PACKAGE_DIR,
     ext_modules=get_extensions(),
     cmdclass={"build_ext": BuildExtension},
 )

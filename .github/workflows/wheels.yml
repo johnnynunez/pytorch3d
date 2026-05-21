@@ -113,12 +113,36 @@ jobs:
               echo "TORCH_INDEX=https://download.pytorch.org/whl/cpu"
             } >> "$GITHUB_ENV"
           else
+            # GPU arch list is variant-specific: cu126 (CUDA 12.6) does not
+            # know sm_100/120 (Blackwell, added in CUDA 12.8). cu130/cu132 do.
+            case "${{ matrix.variant }}" in
+              # CUDA 12.6 supports sm_70 (Volta) through sm_90 (Hopper).
+              cu126)        ARCHS="7.0 7.5 8.0 8.6 8.9 9.0+PTX" ;;
+              # CUDA 13.x DROPS sm_70 (`nvcc fatal: Unsupported gpu architecture
+              # compute_70`). Min sm_75 (Turing). sm_100 = Blackwell datacenter,
+              # sm_120 = Blackwell consumer. sm_110 is NOT a real arch.
+              cu130|cu132)  ARCHS="7.5 8.0 8.6 8.9 9.0 10.0 12.0+PTX" ;;
+              *)            ARCHS="7.5 8.0 8.6 8.9 9.0+PTX" ;;
+            esac
             {
               echo "FORCE_CUDA=1"
               echo "CUDA_HOME=/usr/local/cuda"
-              echo "TORCH_CUDA_ARCH_LIST=7.0 7.5 8.0 8.6 8.9 9.0 10.0+PTX"
+              # CUDA 11+ ships CUB at /usr/local/cuda/include/cub.
+              # Without this, pytorch3d/setup.py warns and never adds CUB to
+              # include_dirs, and the CUDA compile fails.
+              echo "CUB_HOME=/usr/local/cuda/include"
+              echo "TORCH_CUDA_ARCH_LIST=${ARCHS}"
               echo "TORCH_INDEX=https://download.pytorch.org/whl/${{ matrix.variant }}"
             } >> "$GITHUB_ENV"
+            # cu126 needs gcc <= 13 (default is 14 in manylinux_2_28 2026.03.20-1).
+            # The paths exist inside the manylinux container after BEFORE_ALL_LINUX
+            # installs gcc-toolset-13; we just forward the env names from host.
+            if [ "${{ matrix.variant }}" = "cu126" ]; then
+              {
+                echo "CC=/opt/rh/gcc-toolset-13/root/usr/bin/gcc"
+                echo "CXX=/opt/rh/gcc-toolset-13/root/usr/bin/g++"
+              } >> "$GITHUB_ENV"
+            fi
           fi
 
       - name: Build wheels with cibuildwheel
@@ -142,7 +166,8 @@ jobs:
           CIBW_ENVIRONMENT_PASS_LINUX: >-
             VARIANT CUDA_VERSION CUDA_SHORT MAX_JOBS
             PYTORCH3D_FORCE_NO_CUDA FORCE_CUDA
-            CUDA_HOME TORCH_CUDA_ARCH_LIST TORCH_INDEX
+            CUDA_HOME CUB_HOME TORCH_CUDA_ARCH_LIST TORCH_INDEX
+            CC CXX
 
           # macOS is CPU only - no CUDA SDK on the runners.
           CIBW_ENVIRONMENT_MACOS: >-
@@ -172,31 +197,40 @@ jobs:
               ln -snf "/usr/local/cuda-${CUDA_VERSION%.*}" /usr/local/cuda
               /usr/local/cuda/bin/nvcc --version
             fi
+            # manylinux_2_28's default gcc is 14.x as of 2026.03.20-1, but
+            # CUDA 12.6 only supports gcc <= 13. Install gcc-toolset-13 for
+            # cu126. cu130/cu132 support gcc 14, so they keep the default.
+            if [ "${VARIANT}" = "cu126" ]; then
+              dnf install -y gcc-toolset-13 gcc-toolset-13-gcc-c++
+            fi
 
           CIBW_BEFORE_BUILD: |
             python -m pip install --upgrade pip setuptools wheel ninja
             python -m pip install "torch>=2.12.0" --index-url "${TORCH_INDEX}"
 
-          # libtorch / libc10 ship with `torch` itself - excluding them prevents
-          # symbol clashes and keeps wheels small.
+          # Skip auditwheel/delocate REPAIR for torch extensions.
+          #
+          # `torch.utils.cpp_extension.BuildExtension` already sets the right
+          # RUNPATH ($ORIGIN/../torch/lib on Linux, @rpath on macOS) so the
+          # built `_C.so` finds libtorch_cpu / libc10 / libtorch_cuda inside
+          # the user's `torch` install at runtime.
+          #
+          # auditwheel/delocate's job is to bundle external libs INTO the wheel
+          # and rewrite the rpath; even with --exclude they still rewrite the
+          # rpath, leaving the wheel pointing to a libs/ dir that doesn't
+          # contain the excluded torch libs -> ImportError: libc10.so: cannot
+          # open shared object file. (See torchvision / torchaudio which take
+          # the same approach.)
+          #
+          # On Linux we still need to retag `linux_x86_64` -> `manylinux_2_28`
+          # for PyPI to accept the wheel; the wheel binary itself is left intact.
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: |
-            auditwheel repair -w {dest_dir} \
-              --exclude libtorch.so \
-              --exclude libtorch_cpu.so \
-              --exclude libtorch_cuda.so \
-              --exclude libtorch_cuda_cu.so \
-              --exclude libtorch_cuda_cpp.so \
-              --exclude libtorch_python.so \
-              --exclude libc10.so \
-              --exclude libc10_cuda.so \
-              {wheel}
+            python -m pip install --quiet wheel
+            python -m wheel tags --platform-tag "manylinux_2_28_$(uname -m)" --remove {wheel}
+            mv "$(dirname {wheel})"/*manylinux_2_28*.whl {dest_dir}/
 
           CIBW_REPAIR_WHEEL_COMMAND_MACOS: |
-            delocate-wheel -w {dest_dir} -v {wheel} \
-              --exclude libtorch \
-              --exclude libtorch_cpu \
-              --exclude libtorch_python \
-              --exclude libc10
+            cp {wheel} {dest_dir}/
 
           # CPU wheels: smoke-import; CUDA wheels: skip (GH runners have no GPU).
           CIBW_TEST_COMMAND_LINUX: |
