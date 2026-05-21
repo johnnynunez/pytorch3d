@@ -5,15 +5,18 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
+# All static metadata (name, version, dependencies, scripts, packages) lives in
+# pyproject.toml. This file only contains what cannot be expressed there: the
+# C++/CUDA extension build, which has to import torch at install time.
+
 import glob
 import os
-import runpy
 import sys
 import warnings
 from typing import List, Optional
 
 import torch
-from setuptools import find_packages, setup
+from setuptools import setup
 from torch.utils.cpp_extension import CppExtension, CUDA_HOME, CUDAExtension
 
 
@@ -141,10 +144,6 @@ def get_extensions():
     return ext_modules
 
 
-# Retrieve __version__ from the package.
-__version__ = runpy.run_path("pytorch3d/__init__.py")["__version__"]
-
-
 if os.getenv("PYTORCH3D_NO_NINJA", "0") == "1":
 
     class BuildExtension(torch.utils.cpp_extension.BuildExtension):
@@ -154,43 +153,8 @@ if os.getenv("PYTORCH3D_NO_NINJA", "0") == "1":
 else:
     BuildExtension = torch.utils.cpp_extension.BuildExtension
 
-trainer = "pytorch3d.implicitron_trainer"
 
 setup(
-    name="pytorch3d",
-    version=__version__,
-    author="FAIR",
-    url="https://github.com/facebookresearch/pytorch3d",
-    description="PyTorch3D is FAIR's library of reusable components "
-    "for deep Learning with 3D data.",
-    packages=find_packages(
-        exclude=("configs", "tests", "tests.*", "docs.*", "projects.*")
-    )
-    + [trainer],
-    package_dir={trainer: "projects/implicitron_trainer"},
-    install_requires=["iopath"],
-    extras_require={
-        "all": ["matplotlib", "tqdm>4.29.0", "imageio", "ipywidgets"],
-        "dev": ["flake8", "usort"],
-        "implicitron": [
-            "hydra-core>=1.1",
-            "visdom",
-            "lpips",
-            "tqdm>4.29.0",
-            "matplotlib",
-            "accelerate",
-            "sqlalchemy>=2.0",
-        ],
-    },
-    entry_points={
-        "console_scripts": [
-            f"pytorch3d_implicitron_runner={trainer}.experiment:experiment",
-            f"pytorch3d_implicitron_visualizer={trainer}.visualize_reconstruction:main",
-        ]
-    },
     ext_modules=get_extensions(),
     cmdclass={"build_ext": BuildExtension},
-    package_data={
-        "": ["*.json"],
-    },
 )

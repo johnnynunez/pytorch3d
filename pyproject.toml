@@ -1,26 +1,44 @@
+[build-system]
+requires = ["setuptools>=64", "wheel", "torch>=2.12.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "pytorch3d"
-authors = [{ name = "FAIR" }]
-dependencies = ["iopath", "fvcore"]
 description = "PyTorch3D is FAIR's library of reusable components for deep Learning with 3D data."
-dynamic = ["version", "scripts"]
+readme = "README.md"
+authors = [{ name = "FAIR" }]
 requires-python = ">=3.10,<3.15"
+dynamic = ["version"]
+dependencies = ["iopath"]
 
 [project.optional-dependencies]
 all = ["imageio", "ipywidgets", "matplotlib", "tqdm>4.29.0"]
-dev = ["flake8", "usort"]
+dev = ["flake8", "fvcore", "usort"]
 implicitron = [
     "accelerate",
     "hydra-core>=1.1",
     "lpips",
     "matplotlib",
+    "sqlalchemy>=2.0",
     "tqdm>4.29.0",
     "visdom",
 ]
 
-[build-system]
-requires = ["setuptools", "torch>=2.10.0"]
-build-backend = "setuptools.build_meta"
+[project.urls]
+Homepage = "https://github.com/facebookresearch/pytorch3d"
+Repository = "https://github.com/facebookresearch/pytorch3d"
+Documentation = "https://pytorch3d.org/"
+
+[project.scripts]
+pytorch3d_implicitron_runner = "pytorch3d.implicitron_trainer.experiment:experiment"
+pytorch3d_implicitron_visualizer = "pytorch3d.implicitron_trainer.visualize_reconstruction:main"
+
+[tool.setuptools]
+package-dir = { "pytorch3d.implicitron_trainer" = "projects/implicitron_trainer" }
+package-data = { "*" = ["*.json"] }
 
 [tool.setuptools.dynamic]
 version = { attr = "pytorch3d.__version__" }
+
+[tool.setuptools.packages.find]
+exclude = ["configs", "tests", "tests.*", "docs.*", "projects.*"]

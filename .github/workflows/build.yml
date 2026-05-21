@@ -12,11 +12,11 @@ jobs:
     env:
       PYTHON_VERSION: "3.12"
       BUILD_VERSION: "${{ github.run_number }}"
-      PYTORCH_VERSION: "2.4.1"
-      CU_VERSION: "cu121"
+      PYTORCH_VERSION: "2.12.0"
+      CU_VERSION: "cu130"
       JUST_TESTRUN: 1
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - name: Build and run tests
       run: |-
         conda create --name env --yes --quiet conda-build

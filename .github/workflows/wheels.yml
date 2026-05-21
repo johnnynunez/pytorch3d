@@ -1,0 +1,355 @@
+name: Build and publish wheels
+
+# Builds wheels of PyTorch3D for:
+#   * Linux  x86_64   - CPU, CUDA 12.6, CUDA 13.0, CUDA 13.2
+#   * Linux  aarch64  - CPU, CUDA 12.6, CUDA 13.0, CUDA 13.2  (native ARM runner)
+#   * macOS  x86_64   - CPU only (Intel)
+#   * macOS  arm64    - CPU only (Apple Silicon)
+# across CPython 3.10 - 3.14, using cibuildwheel v3.4.1.
+#
+# Minimum PyTorch: 2.12.0.
+#
+# Distribution layout (avoids PyPI filename collisions):
+#   easypytorch3d         - CUDA 13.0 Linux wheels  +  macOS CPU wheels  +  sdist
+#                           (published to PyPI; this is the default `pip install`)
+#   easypytorch3d-cpu     - Linux CPU wheels                (GitHub Release only)
+#   easypytorch3d-cu126   - Linux CUDA 12.6 wheels          (GitHub Release only)
+#   easypytorch3d-cu132   - Linux CUDA 13.2 wheels          (GitHub Release only)
+#
+# Triggers
+#   * push tag `vX.Y.Z`   -> build everything, publish PyPI, create GH Release
+#   * workflow_dispatch   -> build everything, optional publish
+#   * pull_request        -> build only, never publish
+#
+# CUDA install pattern is from StackOverflow (user2978125 + mheyman's GPG-key
+# tip), adapted to rhel8 + sbsa for the modern manylinux_2_28 image.
+#
+# ABI3 / single-wheel-per-Python-and-torch (a la flash-attn-3) requires porting
+# pytorch3d/csrc/** from at::Tensor / c10::* to torch::stable. That is a source
+# refactor, not a CI change.
+
+on:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/wheels.yml"
+      - "scripts/rename_distribution.py"
+      - "setup.py"
+      - "pyproject.toml"
+      - "pytorch3d/csrc/**"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish to PyPI and create GitHub Release"
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build_wheels:
+    name: ${{ matrix.dist_name }} • ${{ matrix.archs }} • ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ---- Linux CPU  (GH Release only; renamed `-cpu` to avoid PyPI collision with cu130) ----
+          - { os: ubuntu-22.04,     archs: x86_64,  variant: cpu,   cuda: "",       cuda_short: "",     dist_name: easypytorch3d-cpu,   platform: linux }
+          - { os: ubuntu-22.04-arm, archs: aarch64, variant: cpu,   cuda: "",       cuda_short: "",     dist_name: easypytorch3d-cpu,   platform: linux }
+          # ---- macOS CPU  (the ONLY macOS option -> goes to PyPI under bare name) ----
+          - { os: macos-13,         archs: x86_64,  variant: cpu,   cuda: "",       cuda_short: "",     dist_name: easypytorch3d,       platform: macos }
+          - { os: macos-14,         archs: arm64,   variant: cpu,   cuda: "",       cuda_short: "",     dist_name: easypytorch3d,       platform: macos }
+          # ---- CUDA 12.6  (GH Release only) ----
+          - { os: ubuntu-22.04,     archs: x86_64,  variant: cu126, cuda: "12.6.3", cuda_short: "12-6", dist_name: easypytorch3d-cu126, platform: linux }
+          - { os: ubuntu-22.04-arm, archs: aarch64, variant: cu126, cuda: "12.6.3", cuda_short: "12-6", dist_name: easypytorch3d-cu126, platform: linux }
+          # ---- CUDA 13.0  (PyPI default + GH Release) ----
+          - { os: ubuntu-22.04,     archs: x86_64,  variant: cu130, cuda: "13.0.1", cuda_short: "13-0", dist_name: easypytorch3d,       platform: linux }
+          - { os: ubuntu-22.04-arm, archs: aarch64, variant: cu130, cuda: "13.0.1", cuda_short: "13-0", dist_name: easypytorch3d,       platform: linux }
+          # ---- CUDA 13.2  (GH Release only) ----
+          - { os: ubuntu-22.04,     archs: x86_64,  variant: cu132, cuda: "13.2.0", cuda_short: "13-2", dist_name: easypytorch3d-cu132, platform: linux }
+          - { os: ubuntu-22.04-arm, archs: aarch64, variant: cu132, cuda: "13.2.0", cuda_short: "13-2", dist_name: easypytorch3d-cu132, platform: linux }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Host-side CUDA install (gives `nvcc` on the runner). Only used for
+      # debug; the actual compile inside the container has its own CUDA
+      # installed in CIBW_BEFORE_ALL_LINUX. Jimver/cuda-toolkit officially
+      # tests x86_64 Linux only, so we restrict.
+      - name: Install CUDA on host
+        if: matrix.cuda != '' && matrix.archs == 'x86_64'
+        uses: Jimver/cuda-toolkit@v0.2.35
+        with:
+          cuda: ${{ matrix.cuda }}
+          method: network
+          sub-packages: '["nvcc", "cudart-dev", "libraries-dev"]'
+          log-file-suffix: "${{ matrix.archs }}-${{ matrix.variant }}.txt"
+
+      - name: Rename distribution to ${{ matrix.dist_name }}
+        run: python3 scripts/rename_distribution.py "${{ matrix.dist_name }}"
+
+      - name: Configure per-variant environment
+        shell: bash
+        run: |
+          {
+            echo "VARIANT=${{ matrix.variant }}"
+            echo "CUDA_VERSION=${{ matrix.cuda }}"
+            echo "CUDA_SHORT=${{ matrix.cuda_short }}"
+            echo "MAX_JOBS=4"
+          } >> "$GITHUB_ENV"
+          if [ -z "${{ matrix.cuda }}" ]; then
+            {
+              echo "PYTORCH3D_FORCE_NO_CUDA=1"
+              echo "FORCE_CUDA=0"
+              echo "TORCH_INDEX=https://download.pytorch.org/whl/cpu"
+            } >> "$GITHUB_ENV"
+          else
+            {
+              echo "FORCE_CUDA=1"
+              echo "CUDA_HOME=/usr/local/cuda"
+              echo "TORCH_CUDA_ARCH_LIST=7.0 7.5 8.0 8.6 8.9 9.0 10.0+PTX"
+              echo "TORCH_INDEX=https://download.pytorch.org/whl/${{ matrix.variant }}"
+            } >> "$GITHUB_ENV"
+          fi
+
+      - name: Build wheels with cibuildwheel
+        uses: pypa/cibuildwheel@v3.4.1
+        env:
+          CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-* cp314-*"
+          # musllinux is not supported by upstream PyTorch wheels.
+          CIBW_SKIP: "*-musllinux*"
+          CIBW_ARCHS_LINUX: ${{ matrix.archs }}
+          CIBW_ARCHS_MACOS: ${{ matrix.archs }}
+
+          # Modern manylinux (AlmaLinux 8 based) - ships gcc 12, libstdc++ for C++17.
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
+
+          # cibuildwheel's default isolated build env would re-resolve torch
+          # from PyPI (x86_64 pulls CUDA-12, huge). --no-build-isolation lets
+          # the matching torch we install in CIBW_BEFORE_BUILD win.
+          CIBW_BUILD_FRONTEND: "pip; args: --no-build-isolation"
+
+          CIBW_ENVIRONMENT_PASS_LINUX: >-
+            VARIANT CUDA_VERSION CUDA_SHORT MAX_JOBS
+            PYTORCH3D_FORCE_NO_CUDA FORCE_CUDA
+            CUDA_HOME TORCH_CUDA_ARCH_LIST TORCH_INDEX
+
+          # macOS is CPU only - no CUDA SDK on the runners.
+          CIBW_ENVIRONMENT_MACOS: >-
+            PYTORCH3D_FORCE_NO_CUDA=1
+            FORCE_CUDA=0
+            MAX_JOBS=4
+            TORCH_INDEX=https://download.pytorch.org/whl/cpu
+
+          # Install CUDA inside the manylinux container for CUDA variants.
+          # h/t StackOverflow user2978125 / mheyman; adapted to rhel8 + sbsa.
+          CIBW_BEFORE_ALL_LINUX: |
+            set -ex
+            if [ "${VARIANT}" != "cpu" ]; then
+              ARCH=$(uname -m)
+              if [ "$ARCH" = "aarch64" ]; then
+                REPO_DIR="rhel8/sbsa"
+              else
+                REPO_DIR="rhel8/x86_64"
+              fi
+              KEY_URL="https://developer.download.nvidia.com/compute/cuda/repos/${REPO_DIR}/D42D0685.pub"
+              REPO_URL="https://developer.download.nvidia.com/compute/cuda/repos/${REPO_DIR}/cuda-rhel8.repo"
+              rpm --import "${KEY_URL}" || true
+              dnf install -y dnf-plugins-core
+              dnf config-manager --add-repo "${REPO_URL}"
+              dnf clean all
+              dnf install -y "cuda-toolkit-${CUDA_SHORT}"
+              ln -snf "/usr/local/cuda-${CUDA_VERSION%.*}" /usr/local/cuda
+              /usr/local/cuda/bin/nvcc --version
+            fi
+
+          CIBW_BEFORE_BUILD: |
+            python -m pip install --upgrade pip setuptools wheel ninja
+            python -m pip install "torch>=2.12.0" --index-url "${TORCH_INDEX}"
+
+          # libtorch / libc10 ship with `torch` itself - excluding them prevents
+          # symbol clashes and keeps wheels small.
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: |
+            auditwheel repair -w {dest_dir} \
+              --exclude libtorch.so \
+              --exclude libtorch_cpu.so \
+              --exclude libtorch_cuda.so \
+              --exclude libtorch_cuda_cu.so \
+              --exclude libtorch_cuda_cpp.so \
+              --exclude libtorch_python.so \
+              --exclude libc10.so \
+              --exclude libc10_cuda.so \
+              {wheel}
+
+          CIBW_REPAIR_WHEEL_COMMAND_MACOS: |
+            delocate-wheel -w {dest_dir} -v {wheel} \
+              --exclude libtorch \
+              --exclude libtorch_cpu \
+              --exclude libtorch_python \
+              --exclude libc10
+
+          # CPU wheels: smoke-import; CUDA wheels: skip (GH runners have no GPU).
+          CIBW_TEST_COMMAND_LINUX: |
+            pip install "torch>=2.12.0" --index-url "${TORCH_INDEX}" && \
+              python -c "import pytorch3d, pytorch3d._C; print(pytorch3d.__version__)"
+          CIBW_TEST_COMMAND_MACOS: |
+            pip install "torch>=2.12.0" --index-url https://download.pytorch.org/whl/cpu && \
+              python -c "import pytorch3d, pytorch3d._C; print(pytorch3d.__version__)"
+          CIBW_TEST_SKIP: ${{ matrix.cuda != '' && '*' || '' }}
+
+          CIBW_BUILD_VERBOSITY: 1
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.archs == 'arm64' && '11.0' || '10.15' }}
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.dist_name }}-${{ matrix.platform }}-${{ matrix.archs }}
+          path: ./wheelhouse/*.whl
+          if-no-files-found: error
+
+  build_sdist:
+    name: sdist (easypytorch3d)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Rename distribution
+        run: python3 scripts/rename_distribution.py easypytorch3d
+
+      - name: Install build deps
+        run: |
+          python -m pip install --upgrade pip build
+          python -m pip install "torch>=2.12.0" \
+            --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Build sdist
+        env:
+          PYTORCH3D_NO_EXTENSION: "1"
+        run: python -m build --sdist --no-isolation
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist-easypytorch3d
+          path: ./dist/*.tar.gz
+          if-no-files-found: error
+
+  publish_pypi:
+    name: Publish CUDA 13.0 + macOS to PyPI (easypytorch3d)
+    needs: [build_wheels, build_sdist]
+    runs-on: ubuntu-22.04
+    if: |
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish == true)
+    environment:
+      name: pypi-easypytorch3d
+      url: https://pypi.org/p/easypytorch3d
+    permissions:
+      id-token: write   # PyPI Trusted Publishing (OIDC)
+      contents: read
+    steps:
+      # Only artifacts whose dist_name is exactly `easypytorch3d`.
+      # That's cu130 Linux wheels + macOS CPU wheels + sdist.
+      - name: Download cu130 Linux wheels
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: "wheels-easypytorch3d-linux-*"
+          merge-multiple: true
+      - name: Download macOS wheels
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: "wheels-easypytorch3d-macos-*"
+          merge-multiple: true
+      - name: Download sdist
+        uses: actions/download-artifact@v4
+        with:
+          name: sdist-easypytorch3d
+          path: dist
+
+      - name: List artifacts
+        run: ls -la dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: true
+          print-hash: true
+
+  github_release:
+    name: Attach all wheels to GitHub Release
+    needs: [build_wheels, build_sdist]
+    runs-on: ubuntu-22.04
+    if: |
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish == true)
+    permissions:
+      contents: write   # create release + upload assets
+    steps:
+      - name: Download ALL wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: "wheels-*"
+          merge-multiple: true
+
+      - name: Download sdist
+        uses: actions/download-artifact@v4
+        with:
+          name: sdist-easypytorch3d
+          path: release-assets
+
+      - name: List assets
+        run: ls -la release-assets/
+
+      - name: Create/Update GitHub Release with all assets
+        uses: softprops/action-gh-release@v2
+        with:
+          # If triggered manually (no tag), still produce a draft release.
+          tag_name: ${{ github.event_name == 'push' && github.ref_name || format('manual-{0}', github.run_id) }}
+          draft: ${{ github.event_name != 'push' }}
+          generate_release_notes: ${{ github.event_name == 'push' }}
+          name: ${{ github.event_name == 'push' && github.ref_name || format('Manual build {0}', github.run_id) }}
+          files: |
+            release-assets/*.whl
+            release-assets/*.tar.gz
+          fail_on_unmatched_files: true
+          body: |
+            Prebuilt PyTorch3D wheels (`easypytorch3d`) for Python 3.10 - 3.14.
+
+            ### What's on PyPI
+
+            `pip install easypytorch3d` installs the **CUDA 13.0** Linux build (or the macOS CPU build on macOS).
+
+            ### What's attached here
+
+            Every variant is below; pick the one matching your environment:
+
+            | File pattern | Platform | Compute |
+            | --- | --- | --- |
+            | `easypytorch3d-…-manylinux_2_28_x86_64.whl` / `…_aarch64.whl`   | Linux | CUDA 13.0 (default) |
+            | `easypytorch3d_cpu-…-manylinux_2_28_*.whl`     | Linux | CPU |
+            | `easypytorch3d_cu126-…-manylinux_2_28_*.whl`   | Linux | CUDA 12.6 |
+            | `easypytorch3d_cu132-…-manylinux_2_28_*.whl`   | Linux | CUDA 13.2 |
+            | `easypytorch3d-…-macosx_*.whl`                 | macOS | CPU |
+
+            All wheels require `torch>=2.12.0` from the matching index, e.g.
+
+            ```bash
+            pip install easypytorch3d_cu126 --extra-index-url https://download.pytorch.org/whl/cu126
+            ```

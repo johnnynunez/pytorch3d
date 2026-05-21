@@ -19,3 +19,9 @@ website/_tutorials/
 website/static/files/
 website/pages/tutorials/*
 !website/pages/tutorials/index.js
+
+# IDE
+.vscode/
+.idea
+.cursor/
+.codex/
