@@ -357,12 +357,11 @@ jobs:
             python -m pip install "torch>=2.12.0" --index-url "${TORCH_INDEX}"
             command -v ccache && ccache -s || true
 
-          # Windows uses cmd.exe by default for BEFORE_BUILD; explicitly use the
-          # same logic. `%TORCH_INDEX%` is the cmd.exe variable expansion.
-          CIBW_BEFORE_BUILD_WINDOWS: |
-            python -m pip install --upgrade pip setuptools wheel ninja
-            python -m pip install "torch>=2.12.0" --index-url %TORCH_INDEX%
-            where sccache && sccache --show-stats || echo no sccache
+          # Windows uses cmd.exe for BEFORE_BUILD, which does NOT execute the
+          # second line of a multi-line YAML block (it just drops everything
+          # after \n). Everything has to be one logical command joined with `&&`.
+          # `%TORCH_INDEX%` is cmd.exe's variable expansion.
+          CIBW_BEFORE_BUILD_WINDOWS: python -m pip install --upgrade pip setuptools wheel ninja && python -m pip install "torch>=2.12.0" --index-url %TORCH_INDEX% && (where sccache && sccache --show-stats || echo no sccache)
 
           # Skip auditwheel/delocate REPAIR for torch extensions.
           #
