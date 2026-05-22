@@ -312,6 +312,10 @@ jobs:
           # FORCE_CUDA / CUDA_HOME / CUB_HOME / TORCH_INDEX / TORCH_CUDA_ARCH_LIST
           # there), but cibuildwheel still requires CIBW_ENVIRONMENT_WINDOWS to
           # not be empty for the build venv to see the right values. Re-export.
+          # `DISTUTILS_USE_SDK=1` tells setuptools not to re-activate vcvars
+          # (we already did via `ilammy/msvc-dev-cmd`). Without it, torch's
+          # cpp_extension._check_abi raises:
+          #   "VC environment is activated but DISTUTILS_USE_SDK is not set"
           CIBW_ENVIRONMENT_WINDOWS: >-
             PYTORCH3D_FORCE_NO_CUDA=$PYTORCH3D_FORCE_NO_CUDA
             FORCE_CUDA=$FORCE_CUDA
@@ -320,6 +324,7 @@ jobs:
             MAX_JOBS=$MAX_JOBS
             TORCH_CUDA_ARCH_LIST=$TORCH_CUDA_ARCH_LIST
             TORCH_INDEX=$TORCH_INDEX
+            DISTUTILS_USE_SDK=1
 
           # Install CUDA inside the manylinux container for CUDA variants.
           # h/t StackOverflow user2978125 / mheyman; adapted to rhel8 + sbsa.
