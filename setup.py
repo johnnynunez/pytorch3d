@@ -62,8 +62,12 @@ def get_extensions():
 
     # C++17 flag differs by compiler: MSVC uses /std:c++17, gcc/clang use
     # -std=c++17. torch.utils.cpp_extension does NOT auto-translate this.
-    cxx_std_flag = "/std:c++17" if sys.platform == "win32" else "-std=c++17"
-    extra_compile_args = {"cxx": [cxx_std_flag]}
+    if sys.platform == "win32":
+        # CUDA 13.2's CCCL requires MSVC's standard-conforming preprocessor.
+        cxx_args = ["/std:c++17", "/Zc:preprocessor"]
+    else:
+        cxx_args = ["-std=c++17"]
+    extra_compile_args = {"cxx": cxx_args}
     define_macros = []
     include_dirs = [extensions_dir]
 
@@ -106,6 +110,9 @@ def get_extensions():
         ]
         if os.name != "nt":
             nvcc_args.append("-std=c++17")
+        else:
+            # Forward the same preprocessor mode to cl.exe when invoked by nvcc.
+            nvcc_args.extend(["-Xcompiler", "/Zc:preprocessor"])
 
         # CUDA 13.0+ compatibility flags for pulsar.
         # Starting with CUDA 13, __global__ function visibility changed.
