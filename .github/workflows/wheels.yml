@@ -71,8 +71,8 @@ jobs:
           - { os: ubuntu-22.04,     archs: x86_64,  variant: cu130, cuda: "13.0.1", cuda_short: "13-0", dist_name: easypytorch3d,       platform: linux }
           - { os: ubuntu-22.04-arm, archs: aarch64, variant: cu130, cuda: "13.0.1", cuda_short: "13-0", dist_name: easypytorch3d,       platform: linux }
           # ---- CUDA 13.2  (GH Release only) ----
-          - { os: ubuntu-22.04,     archs: x86_64,  variant: cu132, cuda: "13.2.0", cuda_short: "13-2", dist_name: easypytorch3d-cu132, platform: linux }
-          - { os: ubuntu-22.04-arm, archs: aarch64, variant: cu132, cuda: "13.2.0", cuda_short: "13-2", dist_name: easypytorch3d-cu132, platform: linux }
+          - { os: ubuntu-22.04,     archs: x86_64,  variant: cu132, cuda: "13.2.1", cuda_short: "13-2", dist_name: easypytorch3d-cu132, platform: linux }
+          - { os: ubuntu-22.04-arm, archs: aarch64, variant: cu132, cuda: "13.2.1", cuda_short: "13-2", dist_name: easypytorch3d-cu132, platform: linux }
           # ---- Windows ----
           # CUDA 12.6 supports Windows Server **2022** only (NVIDIA matrix).
           # CUDA 12.8+ supports Server 2025, so cu130/cu132 go on the newer
@@ -82,7 +82,7 @@ jobs:
           - { os: windows-2025-vs2026, archs: AMD64, variant: cpu,   cuda: "",       cuda_short: "",     dist_name: easypytorch3d-cpu,   platform: windows }
           - { os: windows-2022,        archs: AMD64, variant: cu126, cuda: "12.6.3", cuda_short: "12-6", dist_name: easypytorch3d-cu126, platform: windows }
           - { os: windows-2025-vs2026, archs: AMD64, variant: cu130, cuda: "13.0.1", cuda_short: "13-0", dist_name: easypytorch3d,       platform: windows }
-          - { os: windows-2025-vs2026, archs: AMD64, variant: cu132, cuda: "13.2.0", cuda_short: "13-2", dist_name: easypytorch3d-cu132, platform: windows }
+          - { os: windows-2025-vs2026, archs: AMD64, variant: cu132, cuda: "13.2.1", cuda_short: "13-2", dist_name: easypytorch3d-cu132, platform: windows }
     steps:
       - uses: actions/checkout@v6
 
