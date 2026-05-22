@@ -94,18 +94,67 @@ jobs:
       # debug; the actual compile inside the container has its own CUDA
       # installed in CIBW_BEFORE_ALL_LINUX. Jimver/cuda-toolkit officially
       # tests x86_64 Linux only, so we restrict.
-      # Jimver works natively on Windows (it's documented for windows-2019+).
-      # On Linux we only need it for x86_64 because the manylinux container
-      # installs CUDA itself via CIBW_BEFORE_ALL_LINUX (aarch64 doesn't go
-      # through this step).
-      - name: Install CUDA on host
-        if: matrix.cuda != '' && (matrix.platform == 'windows' || matrix.archs == 'x86_64')
+      # On Linux x86_64 we keep Jimver for host-side debug nvcc; the real
+      # compile happens inside the manylinux container which dnf-installs
+      # CUDA in CIBW_BEFORE_ALL_LINUX. aarch64 doesn't run this step.
+      - name: Install CUDA on host (Linux x86_64)
+        if: matrix.cuda != '' && matrix.archs == 'x86_64' && matrix.platform == 'linux'
         uses: Jimver/cuda-toolkit@v0.2.35
         with:
           cuda: ${{ matrix.cuda }}
           method: network
           sub-packages: '["nvcc", "cudart-dev", "libraries-dev"]'
           log-file-suffix: "${{ matrix.platform }}-${{ matrix.archs }}-${{ matrix.variant }}.txt"
+
+      # Windows: install CUDA directly from NVIDIA's network installer. Jimver
+      # was failing because it forwards `libraries-dev` to the Windows
+      # installer literally, and Windows has no such component (that's an
+      # apt/dnf abstraction). We pick the actual Windows component names that
+      # NVIDIA ships and run the installer in silent mode. The component
+      # naming convention is `<pkg>_<MAJ.MIN>` (e.g. `nvcc_12.6`).
+      - name: Install CUDA on host (Windows)
+        if: matrix.cuda != '' && matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $cudaVer = "${{ matrix.cuda }}"
+          $cudaMajMin = ($cudaVer.Split('.')[0..1] -join '.')
+          $url = "https://developer.download.nvidia.com/compute/cuda/${cudaVer}/network_installers/cuda_${cudaVer}_windows_network.exe"
+          $installer = "$env:RUNNER_TEMP\cuda_installer.exe"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
+          $components = @(
+            "nvcc_${cudaMajMin}",
+            "cudart_${cudaMajMin}",
+            "visual_studio_integration_${cudaMajMin}",
+            "thrust_${cudaMajMin}",
+            "nvrtc_${cudaMajMin}",
+            "nvrtc_dev_${cudaMajMin}"
+          )
+          Write-Host "Installing components: $($components -join ' ')"
+          $proc = Start-Process -FilePath $installer -ArgumentList (@("-s") + $components) -Wait -PassThru -NoNewWindow
+          if ($proc.ExitCode -ne 0) {
+            Write-Host "Installer exit code: $($proc.ExitCode)"
+            $logRoots = @("$env:TEMP", "$env:LOCALAPPDATA\NVIDIA Corporation\Logs")
+            foreach ($root in $logRoots) {
+              if (Test-Path $root) {
+                Get-ChildItem -Path $root -Filter "*CUDA*" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+                  Write-Host "=== $($_.FullName) ==="
+                  Get-Content $_.FullName -Tail 100 -ErrorAction SilentlyContinue
+                }
+              }
+            }
+            exit 1
+          }
+          $cudaPath = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v${cudaMajMin}"
+          if (-not (Test-Path "${cudaPath}\bin\nvcc.exe")) {
+            Write-Host "ERROR: nvcc.exe missing at ${cudaPath}\bin"
+            Get-ChildItem "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\" -ErrorAction SilentlyContinue
+            exit 1
+          }
+          Add-Content $env:GITHUB_ENV "CUDA_PATH=${cudaPath}"
+          Add-Content $env:GITHUB_PATH "${cudaPath}\bin"
+          & "${cudaPath}\bin\nvcc.exe" --version
 
       # Restore ccache from previous runs (per-matrix-row). Skipped on
       # Windows because we don't run ccache there (no native MSVC support).
