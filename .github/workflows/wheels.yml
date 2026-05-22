@@ -94,17 +94,13 @@ jobs:
       # debug; the actual compile inside the container has its own CUDA
       # installed in CIBW_BEFORE_ALL_LINUX. Jimver/cuda-toolkit officially
       # tests x86_64 Linux only, so we restrict.
-      # On Linux x86_64 we keep Jimver for host-side debug nvcc; the real
-      # compile happens inside the manylinux container which dnf-installs
-      # CUDA in CIBW_BEFORE_ALL_LINUX. aarch64 doesn't run this step.
-      - name: Install CUDA on host (Linux x86_64)
-        if: matrix.cuda != '' && matrix.archs == 'x86_64' && matrix.platform == 'linux'
-        uses: Jimver/cuda-toolkit@v0.2.35
-        with:
-          cuda: ${{ matrix.cuda }}
-          method: network
-          sub-packages: '["nvcc", "cudart-dev", "libraries-dev"]'
-          log-file-suffix: "${{ matrix.platform }}-${{ matrix.archs }}-${{ matrix.variant }}.txt"
+      # No host-side Jimver step on Linux: the real CUDA install for Linux
+      # happens INSIDE the manylinux container in CIBW_BEFORE_ALL_LINUX via
+      # `dnf install cuda-toolkit-<MAJ-MIN>` from NVIDIA's rhel8 repo (which
+      # supports any CUDA version NVIDIA has published, including the most
+      # recent point releases like 13.2.1). Jimver v0.2.35 hard-codes a
+      # version list and fails with "Version not available: 13.2.1" for
+      # anything published after its last release.
 
       # Windows: install CUDA directly from NVIDIA's network installer. Jimver
       # was failing because it forwards `libraries-dev` to the Windows
