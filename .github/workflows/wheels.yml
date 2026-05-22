@@ -75,17 +75,16 @@ jobs:
           - { os: ubuntu-22.04-arm, archs: aarch64, variant: cu132, cuda: "13.2.1", cuda_short: "13-2", dist_name: easypytorch3d-cu132, platform: linux }
           # ---- Windows ----
           # CUDA 12.6 supports Windows Server **2022** only (NVIDIA matrix).
-          # CUDA 12.8+ supports Server 2025, so cu130/cu132 go on the newer
-          # windows-2025-vs2026 image (GH-Actions issue #14017). cu126 stays
-          # on windows-2022 (with VS 2022; CUDA 12.6 doesn't support VS 2026).
+          # CPU/cu130/cu132 use the standard Windows Server 2025 image; avoid
+          # the VS 2026 preview label because CUDA 13.0 rejects that host compiler.
           # sccache wraps nvcc.exe for the .cu compiles (~80% of build time).
-          - { os: windows-2025-vs2026, archs: AMD64, variant: cpu,   cuda: "",       cuda_short: "",     dist_name: easypytorch3d-cpu,   platform: windows }
+          - { os: windows-2022,        archs: AMD64, variant: cpu,   cuda: "",       cuda_short: "",     dist_name: easypytorch3d-cpu,   platform: windows }
           # NOTE: Windows CUDA installer filenames must be patch-exact.
           # 13.0.3 (cu130) is the latest 13.0.x patch; cu126/cu132 use the
           # versions PyTorch's own CI ships (12.6.2, 13.2.1).
           - { os: windows-2022,        archs: AMD64, variant: cu126, cuda: "12.6.2", cuda_short: "12-6", dist_name: easypytorch3d-cu126, platform: windows }
-          - { os: windows-2025-vs2026, archs: AMD64, variant: cu130, cuda: "13.0.3", cuda_short: "13-0", dist_name: easypytorch3d,       platform: windows }
-          - { os: windows-2025-vs2026, archs: AMD64, variant: cu132, cuda: "13.2.1", cuda_short: "13-2", dist_name: easypytorch3d-cu132, platform: windows }
+          - { os: windows-2022,        archs: AMD64, variant: cu130, cuda: "13.0.3", cuda_short: "13-0", dist_name: easypytorch3d,       platform: windows }
+          - { os: windows-2022,        archs: AMD64, variant: cu132, cuda: "13.2.1", cuda_short: "13-2", dist_name: easypytorch3d-cu132, platform: windows }
     steps:
       - uses: actions/checkout@v6
 
