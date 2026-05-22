@@ -119,13 +119,24 @@ jobs:
           $installer = "$env:RUNNER_TEMP\cuda_installer.exe"
           Write-Host "Downloading $url"
           Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
+          # Component list matches PyTorch's own Windows CI (cuda_install.bat).
+          # Math-lib headers (cusparse.h etc.) are referenced from torch's
+          # ATen/cuda/CUDAContextLight.h - building torch C++ extensions like
+          # pytorch3d without them gives `fatal error C1083: Cannot open
+          # include file: 'cusparse.h'`.
           $components = @(
             "nvcc_${cudaMajMin}",
             "cudart_${cudaMajMin}",
             "visual_studio_integration_${cudaMajMin}",
             "thrust_${cudaMajMin}",
             "nvrtc_${cudaMajMin}",
-            "nvrtc_dev_${cudaMajMin}"
+            "nvrtc_dev_${cudaMajMin}",
+            "cuda_profiler_api_${cudaMajMin}",
+            "cublas_${cudaMajMin}",      "cublas_dev_${cudaMajMin}",
+            "cusparse_${cudaMajMin}",    "cusparse_dev_${cudaMajMin}",
+            "cusolver_${cudaMajMin}",    "cusolver_dev_${cudaMajMin}",
+            "curand_${cudaMajMin}",      "curand_dev_${cudaMajMin}",
+            "cufft_${cudaMajMin}",       "cufft_dev_${cudaMajMin}"
           )
           Write-Host "Installing components: $($components -join ' ')"
           $proc = Start-Process -FilePath $installer -ArgumentList (@("-s") + $components) -Wait -PassThru -NoNewWindow
