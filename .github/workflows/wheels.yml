@@ -80,8 +80,11 @@ jobs:
           # on windows-2022 (with VS 2022; CUDA 12.6 doesn't support VS 2026).
           # sccache wraps nvcc.exe for the .cu compiles (~80% of build time).
           - { os: windows-2025-vs2026, archs: AMD64, variant: cpu,   cuda: "",       cuda_short: "",     dist_name: easypytorch3d-cpu,   platform: windows }
-          - { os: windows-2022,        archs: AMD64, variant: cu126, cuda: "12.6.3", cuda_short: "12-6", dist_name: easypytorch3d-cu126, platform: windows }
-          - { os: windows-2025-vs2026, archs: AMD64, variant: cu130, cuda: "13.0.1", cuda_short: "13-0", dist_name: easypytorch3d,       platform: windows }
+          # NOTE: Windows CUDA installer filenames must be patch-exact. We use
+          # the versions PyTorch uses in their Windows CI (proven downloadable):
+          # 12.6.2 (cu126), 13.0.0 (cu130), 13.2.1 (cu132).
+          - { os: windows-2022,        archs: AMD64, variant: cu126, cuda: "12.6.2", cuda_short: "12-6", dist_name: easypytorch3d-cu126, platform: windows }
+          - { os: windows-2025-vs2026, archs: AMD64, variant: cu130, cuda: "13.0.0", cuda_short: "13-0", dist_name: easypytorch3d,       platform: windows }
           - { os: windows-2025-vs2026, archs: AMD64, variant: cu132, cuda: "13.2.1", cuda_short: "13-2", dist_name: easypytorch3d-cu132, platform: windows }
     steps:
       - uses: actions/checkout@v6
@@ -102,12 +105,17 @@ jobs:
       # version list and fails with "Version not available: 13.2.1" for
       # anything published after its last release.
 
-      # Windows: install CUDA directly from NVIDIA's network installer. Jimver
-      # was failing because it forwards `libraries-dev` to the Windows
-      # installer literally, and Windows has no such component (that's an
-      # apt/dnf abstraction). We pick the actual Windows component names that
-      # NVIDIA ships and run the installer in silent mode. The component
-      # naming convention is `<pkg>_<MAJ.MIN>` (e.g. `nvcc_12.6`).
+      # Install CUDA on Windows by mirroring PyTorch's own CI
+      # (.ci/pytorch/windows/internal/cuda_install.bat). The network installer
+      # is too brittle with custom component lists, so we use the LOCAL
+      # installer: download the self-extracting .exe, unpack it with 7z, then
+      # run setup.exe -s with the right component list.
+      #
+      # Per-version specifics:
+      #   * CUDA 12.6 -> need explicit list (with nvjitlink, nvtx, npp, etc.)
+      #   * CUDA 13.x -> pass NO components; default install brings everything
+      #                  in (incl. cuda_cccl), and CUDA 13 toolkit installer
+      #                  no longer bundles the GPU driver.
       - name: Install CUDA on host (Windows)
         if: matrix.cuda != '' && matrix.platform == 'windows'
         shell: pwsh
@@ -115,55 +123,74 @@ jobs:
           $ErrorActionPreference = "Stop"
           $cudaVer = "${{ matrix.cuda }}"
           $cudaMajMin = ($cudaVer.Split('.')[0..1] -join '.')
-          $url = "https://developer.download.nvidia.com/compute/cuda/${cudaVer}/network_installers/cuda_${cudaVer}_windows_network.exe"
-          $installer = "$env:RUNNER_TEMP\cuda_installer.exe"
-          Write-Host "Downloading $url"
-          Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
-          # Component list matches PyTorch's own Windows CI (cuda_install.bat).
-          # Math-lib headers (cusparse.h etc.) are referenced from torch's
-          # ATen/cuda/CUDAContextLight.h - building torch C++ extensions like
-          # pytorch3d without them gives `fatal error C1083: Cannot open
-          # include file: 'cusparse.h'`.
-          $components = @(
-            "nvcc_${cudaMajMin}",
-            "cudart_${cudaMajMin}",
-            "visual_studio_integration_${cudaMajMin}",
-            "thrust_${cudaMajMin}",
-            "nvrtc_${cudaMajMin}",
-            "nvrtc_dev_${cudaMajMin}",
-            "cuda_profiler_api_${cudaMajMin}",
-            "cublas_${cudaMajMin}",      "cublas_dev_${cudaMajMin}",
-            "cusparse_${cudaMajMin}",    "cusparse_dev_${cudaMajMin}",
-            "cusolver_${cudaMajMin}",    "cusolver_dev_${cudaMajMin}",
-            "curand_${cudaMajMin}",      "curand_dev_${cudaMajMin}",
-            "cufft_${cudaMajMin}",       "cufft_dev_${cudaMajMin}"
-          )
-          # `cuda_cccl_X.Y` (CUDA C++ Core Libraries) ships the CRT headers
-          # (`crt/host_config.h` etc.). In CUDA 12 they were transitively in
-          # `nvcc`; in CUDA 13 NVIDIA split it into its own component. Without
-          # this on CUDA 13+, the compile fails with
-          #   `C1083: 'crt/host_config.h': No such file`.
-          # The installer for CUDA 12.x does NOT have a component named
-          # `cuda_cccl_12.X` and exits -522190823 ("Unknown package") if asked.
-          $cudaMajor = [int]$cudaVer.Split('.')[0]
-          if ($cudaMajor -ge 13) {
-            $components += "cuda_cccl_${cudaMajMin}"
+          switch -Regex ($cudaVer) {
+            "^12\.6" {
+              $installerName = "cuda_12.6.2_560.94_windows.exe"
+              $components = @(
+                "cuda_profiler_api_12.6", "thrust_12.6", "nvcc_12.6",
+                "cuobjdump_12.6", "nvprune_12.6", "nvprof_12.6", "cupti_12.6",
+                "cublas_12.6", "cublas_dev_12.6", "cudart_12.6",
+                "cufft_12.6", "cufft_dev_12.6",
+                "curand_12.6", "curand_dev_12.6",
+                "cusolver_12.6", "cusolver_dev_12.6",
+                "cusparse_12.6", "cusparse_dev_12.6",
+                "npp_12.6", "npp_dev_12.6",
+                "nvrtc_12.6", "nvrtc_dev_12.6",
+                "nvml_dev_12.6", "nvjitlink_12.6", "nvtx_12.6"
+              )
+            }
+            "^13\.0" {
+              $installerName = "cuda_13.0.0_windows.exe"
+              $components = @()
+            }
+            "^13\.2" {
+              $installerName = "cuda_13.2.1_windows.exe"
+              $components = @()
+            }
+            default {
+              Write-Host "Unsupported CUDA version: $cudaVer"
+              exit 1
+            }
           }
-          Write-Host "Installing components: $($components -join ' ')"
-          $proc = Start-Process -FilePath $installer -ArgumentList (@("-s") + $components) -Wait -PassThru -NoNewWindow
+
+          # NVIDIA's CDN first, with PyTorch's S3 mirror as fallback.
+          # PyTorch keeps an exact copy in `ossci-windows.s3.amazonaws.com`.
+          $localInstallerVer = $installerName -replace '^cuda_([0-9.]+)_.*', '$1'
+          $url = "https://developer.download.nvidia.com/compute/cuda/${localInstallerVer}/local_installers/${installerName}"
+          $installer = "$env:RUNNER_TEMP\$installerName"
+          Write-Host "Downloading $url"
+          try {
+            Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
+          } catch {
+            Write-Host "NVIDIA CDN failed; falling back to PyTorch S3 mirror"
+            $url = "https://ossci-windows.s3.amazonaws.com/$installerName"
+            Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
+          }
+
+          # Extract the self-extracting .exe with 7z (preinstalled on GH runners).
+          $extractDir = "$env:RUNNER_TEMP\cuda_extract"
+          Write-Host "Extracting $installer -> $extractDir"
+          & "C:\Program Files\7-Zip\7z.exe" x $installer "-o$extractDir" -y | Out-Null
+          $setupExe = Join-Path $extractDir "setup.exe"
+          if (-not (Test-Path $setupExe)) {
+            Write-Host "ERROR: setup.exe not found after 7z extract"
+            Get-ChildItem $extractDir | Select-Object -First 30
+            exit 1
+          }
+
+          $logDir = Join-Path $extractDir "cuda_install_logs"
+          $argList = @("-s") + $components + @("-loglevel:6", "-log:$logDir")
+          Write-Host "Running: setup.exe $argList"
+          $proc = Start-Process -FilePath $setupExe -ArgumentList $argList -Wait -PassThru -NoNewWindow
           if ($proc.ExitCode -ne 0) {
-            Write-Host "Installer exit code: $($proc.ExitCode)"
-            $logRoots = @("$env:TEMP", "$env:LOCALAPPDATA\NVIDIA Corporation\Logs")
-            foreach ($root in $logRoots) {
-              if (Test-Path $root) {
-                Get-ChildItem -Path $root -Filter "*CUDA*" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
-                  Write-Host "=== $($_.FullName) ==="
-                  Get-Content $_.FullName -Tail 100 -ErrorAction SilentlyContinue
-                }
-              }
+            Write-Host "setup.exe exit code: $($proc.ExitCode)"
+            Get-ChildItem $logDir -ErrorAction SilentlyContinue | ForEach-Object {
+              Write-Host "=== $($_.FullName) ==="
+              Get-Content $_.FullName -Tail 200 -ErrorAction SilentlyContinue
             }
             exit 1
           }
+
           $cudaPath = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v${cudaMajMin}"
           if (-not (Test-Path "${cudaPath}\bin\nvcc.exe")) {
             Write-Host "ERROR: nvcc.exe missing at ${cudaPath}\bin"
