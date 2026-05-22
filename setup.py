@@ -60,7 +60,10 @@ def get_extensions():
     source_cuda = glob.glob(os.path.join(extensions_dir, "**", "*.cu"), recursive=True)
     extension = CppExtension
 
-    extra_compile_args = {"cxx": ["-std=c++17"]}
+    # C++17 flag differs by compiler: MSVC uses /std:c++17, gcc/clang use
+    # -std=c++17. torch.utils.cpp_extension does NOT auto-translate this.
+    cxx_std_flag = "/std:c++17" if sys.platform == "win32" else "-std=c++17"
+    extra_compile_args = {"cxx": [cxx_std_flag]}
     define_macros = []
     include_dirs = [extensions_dir]
 
