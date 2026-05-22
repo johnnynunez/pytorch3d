@@ -166,40 +166,21 @@ jobs:
             ccache-${{ matrix.os }}-${{ matrix.archs }}-${{ matrix.variant }}-
             ccache-${{ matrix.os }}-${{ matrix.archs }}-
 
-      # ----- sccache (Windows only) ---------------------------------------
-      # ccache has no native MSVC support; sccache is the equivalent on
-      # Windows and ships with a GitHub Actions cache backend so we don't
-      # need a separate actions/cache@v5 entry for it.
-      - name: Install sccache (Windows)
+      # Activate MSVC dev environment so cl.exe / link.exe / INCLUDE / LIB are
+      # set up the way torch.utils.cpp_extension expects. cibuildwheel does
+      # NOT auto-activate vcvars64.bat, and torch's compiler-version probe
+      # (subprocess.check_output("cl")) requires cl.exe on PATH.
+      - name: Activate MSVC dev env (Windows)
         if: matrix.platform == 'windows'
-        uses: mozilla-actions/sccache-action@v0.0.10
+        uses: ilammy/msvc-dev-cmd@v1
         with:
-          version: "v0.10.0"
+          arch: x64
 
-      - name: Wrap nvcc with sccache (Windows + CUDA)
-        if: matrix.platform == 'windows' && matrix.cuda != ''
-        shell: pwsh
-        run: |
-          # Move the real nvcc.exe out of the way, drop a sccache.exe copy in
-          # its place with the same filename. When ninja invokes
-          # %CUDA_PATH%\bin\nvcc.exe by absolute path, Windows runs sccache,
-          # which (renamed as `nvcc`) does a PATH lookup for the next `nvcc`
-          # and finds the real one under \nvcc.real\.
-          $sccache = (Get-Command sccache.exe).Path
-          $cudaBin = Join-Path $env:CUDA_PATH "bin"
-          $realDir = Join-Path $cudaBin "nvcc.real"
-          if ((Test-Path (Join-Path $cudaBin "nvcc.exe")) -and -not (Test-Path (Join-Path $realDir "nvcc.exe"))) {
-            New-Item -ItemType Directory -Force -Path $realDir | Out-Null
-            Move-Item (Join-Path $cudaBin "nvcc.exe") (Join-Path $realDir "nvcc.exe")
-            Copy-Item $sccache (Join-Path $cudaBin "nvcc.exe")
-            Write-Host "Wrapped $cudaBin\nvcc.exe -> sccache -> $realDir\nvcc.exe"
-          }
-          # Make `nvcc.real\` visible to sccache's PATH lookup AND propagate
-          # the sccache backend env to cibuildwheel.
-          Add-Content $env:GITHUB_PATH $realDir
-          Add-Content $env:GITHUB_ENV "SCCACHE_GHA_ENABLED=true"
-          & $sccache --start-server | Out-Null
-          & $sccache --show-stats
+      # sccache for Windows is parked: wrapping `nvcc.exe` by replacing the
+      # binary with a copy of sccache breaks masquerade lookup (sccache
+      # cannot identify "itself" via a plain file copy and ends up with
+      # `Compiler not supported: ""`). Windows builds rebuild from scratch
+      # for now; revisit with a real .exe shim later.
 
       # macOS runs without a container, so ccache is installed/wired on the
       # host. (For Linux, this happens inside the manylinux container in
@@ -330,8 +311,7 @@ jobs:
           # Windows: env propagates from $GITHUB_ENV (Configure step sets
           # FORCE_CUDA / CUDA_HOME / CUB_HOME / TORCH_INDEX / TORCH_CUDA_ARCH_LIST
           # there), but cibuildwheel still requires CIBW_ENVIRONMENT_WINDOWS to
-          # not be empty for the build venv to see the right values. Re-export
-          # plus the sccache GHA backend vars so nvcc-via-sccache hits cache.
+          # not be empty for the build venv to see the right values. Re-export.
           CIBW_ENVIRONMENT_WINDOWS: >-
             PYTORCH3D_FORCE_NO_CUDA=$PYTORCH3D_FORCE_NO_CUDA
             FORCE_CUDA=$FORCE_CUDA
@@ -340,9 +320,6 @@ jobs:
             MAX_JOBS=$MAX_JOBS
             TORCH_CUDA_ARCH_LIST=$TORCH_CUDA_ARCH_LIST
             TORCH_INDEX=$TORCH_INDEX
-            SCCACHE_GHA_ENABLED=$SCCACHE_GHA_ENABLED
-            ACTIONS_CACHE_URL=$ACTIONS_CACHE_URL
-            ACTIONS_RUNTIME_TOKEN=$ACTIONS_RUNTIME_TOKEN
 
           # Install CUDA inside the manylinux container for CUDA variants.
           # h/t StackOverflow user2978125 / mheyman; adapted to rhel8 + sbsa.
@@ -406,7 +383,7 @@ jobs:
           # second line of a multi-line YAML block (it just drops everything
           # after \n). Everything has to be one logical command joined with `&&`.
           # `%TORCH_INDEX%` is cmd.exe's variable expansion.
-          CIBW_BEFORE_BUILD_WINDOWS: python -m pip install --upgrade pip setuptools wheel ninja && python -m pip install "torch>=2.12.0" --index-url %TORCH_INDEX% && (where sccache && sccache --show-stats || echo no sccache)
+          CIBW_BEFORE_BUILD_WINDOWS: python -m pip install --upgrade pip setuptools wheel ninja && python -m pip install "torch>=2.12.0" --index-url %TORCH_INDEX%
 
           # Skip auditwheel/delocate REPAIR for torch extensions.
           #
