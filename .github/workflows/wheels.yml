@@ -124,9 +124,15 @@ jobs:
           # ATen/cuda/CUDAContextLight.h - building torch C++ extensions like
           # pytorch3d without them gives `fatal error C1083: Cannot open
           # include file: 'cusparse.h'`.
+          #
+          # `cuda_cccl_${cudaMajMin}` (CUDA C++ Core Libraries) ships the CRT
+          # headers (`crt/host_config.h` etc.). In CUDA 12 it was a transitive
+          # dep of nvcc; in CUDA 13 NVIDIA split it out, so a stripped-down
+          # install fails with `C1083: 'crt/host_config.h': No such file`.
           $components = @(
             "nvcc_${cudaMajMin}",
             "cudart_${cudaMajMin}",
+            "cuda_cccl_${cudaMajMin}",
             "visual_studio_integration_${cudaMajMin}",
             "thrust_${cudaMajMin}",
             "nvrtc_${cudaMajMin}",
