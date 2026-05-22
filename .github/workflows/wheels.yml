@@ -80,11 +80,11 @@ jobs:
           # on windows-2022 (with VS 2022; CUDA 12.6 doesn't support VS 2026).
           # sccache wraps nvcc.exe for the .cu compiles (~80% of build time).
           - { os: windows-2025-vs2026, archs: AMD64, variant: cpu,   cuda: "",       cuda_short: "",     dist_name: easypytorch3d-cpu,   platform: windows }
-          # NOTE: Windows CUDA installer filenames must be patch-exact. We use
-          # the versions PyTorch uses in their Windows CI (proven downloadable):
-          # 12.6.2 (cu126), 13.0.0 (cu130), 13.2.1 (cu132).
+          # NOTE: Windows CUDA installer filenames must be patch-exact.
+          # 13.0.3 (cu130) is the latest 13.0.x patch; cu126/cu132 use the
+          # versions PyTorch's own CI ships (12.6.2, 13.2.1).
           - { os: windows-2022,        archs: AMD64, variant: cu126, cuda: "12.6.2", cuda_short: "12-6", dist_name: easypytorch3d-cu126, platform: windows }
-          - { os: windows-2025-vs2026, archs: AMD64, variant: cu130, cuda: "13.0.0", cuda_short: "13-0", dist_name: easypytorch3d,       platform: windows }
+          - { os: windows-2025-vs2026, archs: AMD64, variant: cu130, cuda: "13.0.3", cuda_short: "13-0", dist_name: easypytorch3d,       platform: windows }
           - { os: windows-2025-vs2026, archs: AMD64, variant: cu132, cuda: "13.2.1", cuda_short: "13-2", dist_name: easypytorch3d-cu132, platform: windows }
     steps:
       - uses: actions/checkout@v6
@@ -140,7 +140,7 @@ jobs:
               )
             }
             "^13\.0" {
-              $installerName = "cuda_13.0.0_windows.exe"
+              $installerName = "cuda_13.0.3_windows.exe"
               $components = @()
             }
             "^13\.2" {
